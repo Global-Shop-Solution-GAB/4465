@@ -1,0 +1,223 @@
+Program.Sub.ScreenSU.Start
+Gui.Form_Grid..Create
+Gui.Form_Grid..Size(15360,10695)
+Gui.Form_Grid..MinX(0)
+Gui.Form_Grid..MinY(0)
+Gui.Form_Grid..Position(0,0)
+Gui.Form_Grid..BackColor(-2147483633)
+Gui.Form_Grid..MousePointer(0)
+Gui.Form_Grid..Event(UnLoad,cmdClose_Click)
+Gui.Form_Grid..Caption("Flex Schedule")
+Gui.Form_Grid.GsGridControl1.Create(GsGridControl)
+Gui.Form_Grid.GsGridControl1.Size(14910,8535)
+Gui.Form_Grid.GsGridControl1.Position(75,105)
+Gui.Form_Grid.cmdClose.Create(Button)
+Gui.Form_Grid.cmdClose.Size(855,375)
+Gui.Form_Grid.cmdClose.Position(180,9150)
+Gui.Form_Grid.cmdClose.Caption("Close")
+Gui.Form_Grid.cmdClose.Event(Click,cmdClose_Click)
+Gui.Form_Grid.cmdExport.Create(Button)
+Gui.Form_Grid.cmdExport.Size(855,375)
+Gui.Form_Grid.cmdExport.Position(14055,9270)
+Gui.Form_Grid.cmdExport.Caption("Export")
+Gui.Form_Grid.cmdExport.Event(Click,cmdExport_Click)
+Program.Sub.ScreenSU.End
+
+
+Program.Sub.Preflight.Start
+Variable.Global.sTermLocation.Declare(String)
+Variable.Global.iTerminal.Declare(Long,0)
+Program.Sub.Preflight.End
+
+Program.Sub.Main.Start
+'FLEX SCHEDULE dashboard that launches from the GUI.
+'Location specific based on the description in gui group security (first 2 characters match location)
+'15760
+'15710
+'15961	Async
+'By Don Finch 3/6/2017
+v.Local.sSql.Declare(String)
+v.Local.iCount.Declare(Long)
+v.Local.dStart.Declare(Date)
+v.Local.dEnd.Declare(Date)
+v.Local.sFile.Declare(String)
+
+
+'change the script 1 button on the SFDC when it's oopened
+f.Intrinsic.Control.If(v.Caller.Hook,=,15710)
+	V.Passed.000016.Set("Flex Dash")
+	f.Intrinsic.Control.End
+
+f.Intrinsic.Control.EndIf
+
+f.Intrinsic.Control.CallSub(get_loc)
+f.Intrinsic.Control.CallSub(cmdok_click)
+
+
+
+
+
+Program.Sub.Main.End
+
+Program.Sub.cmdOK_Click.Start
+F.Intrinsic.Control.SetErrorHandler("cmdOK_Click_Err")
+F.Intrinsic.Control.ClearErrors
+
+V.Local.sError.Declare(String)
+
+
+
+
+v.Local.sSql.Declare(String)
+v.Local.iCount.Declare(Long)
+v.Local.dStart.Declare(Date)
+v.Local.dEnd.Declare(Date)
+v.Local.sFile.Declare(String)
+v.Local.sMsg.Declare(String)
+V.Local.iHandle.Declare(Long)
+v.Local.bExcel.Declare(Boolean)
+v.Local.bFileLocked.Declare(Boolean)
+v.Local.sPart.Declare(String)
+v.Local.sJob.Declare(String)
+v.Local.sSuffux.Declare(String)
+v.Local.sDesc.Declare(String)
+v.Local.sRet.Declare(String)
+v.Local.sSql2.Declare(String)
+v.Local.sWC.Declare(String)
+
+'define the work center that will be used for hte query
+f.Intrinsic.String.Concat(v.Global.sTermLocation,"01",v.Local.sWC)
+
+
+'open connection and create the table
+f.ODBC.Connection!conx.OpenConnection(v.Ambient.PDSN,v.Ambient.PUser,v.Ambient.PPass)
+F.Intrinsic.String.Build("select fx.schedule + '-' + fx.schedule_suffix as SCHEDULE, jh.qty_order as RUN_QUANTITY, jh.part AS PART, jh.description AS DESCRIPTION, fx.job + '-' + fx.suffix as WO, fx.labor_seq as SEQUENCE, jo.date_due AS DUE_DATE from V_JOB_CT_FLX_SCHD fx left outer join V_JOB_HEADER jh ON fx.job = jh.job and jh.suffix = '000' left outer join V_JOB_OPERATIONS jo ON fx.job = jo.job and fx.suffix = jo.suffix and fx.labor_seq = jo.seq where FX.LABOR_WC = '{0}' AND JH.LOCATION = '{1}' AND JH.DATE_CLOSED = '1900-01-01' AND FX.FLAG_CLOSED = '' AND JO.FLAG_CLOSED <> 'Y' ORDER BY JH.PART",V.Local.sWC,V.Global.sTermLocation,V.Local.sSql)
+F.DATA.DATATABLE.CREATEFROMSQL("dtFlex","conx",v.Local.sSql)
+
+'the query for the grid pulls parent job info. if this is a standalone work order, we need to get that information for the grid
+F.Intrinsic.Control.For(v.Local.iCount, 0, v.DataTable.dtFlex.RowCount--, 1)
+	V.Local.sPart.Set(V.DataTable.dtFlex(v.Local.iCount).PART!FieldVal)
+	'if the part number is blank, it has no parent, go find the part/description for the stand alone job)
+	F.Intrinsic.Control.If(V.Local.sPart,=,"")
+		v.Local.sJob.Set(v.datatable.dtFlex(v.Local.iCount).WO!FieldVal)
+		f.Intrinsic.String.Split(v.Local.sJob,"-",v.Local.sJob)		
+		F.Intrinsic.String.Build("select PART, DESCRIPTION, QTY_ORDER from V_JOB_HEADER where JOB = '{0}' AND SUFFIX = '{1}'",V.Local.sJob(0), v.Local.sJob(1),V.Local.sSql2)
+		F.ODBC.Connection!conx.ExecuteAndReturn(V.Local.sSql2,V.Local.sRet)
+		f.Intrinsic.String.Split(v.Local.sRet,"*!*",v.Local.sRet)
+		f.data.datatable.setvalue("dtFlex",v.Local.iCount,"PART",v.Local.sRet(0))	
+		f.Data.DataTable.SetValue("dtFlex",v.Local.iCount,"DESCRIPTION",V.Local.sRet(1))
+		f.Data.DataTable.SetValue("dtFlex",v.Local.iCount,"RUN_QUANTITY",V.Local.sRet(2))
+	f.Intrinsic.Control.EndIf
+F.Intrinsic.Control.Next(V.Local.iCount)
+
+'create the dataview
+f.data.dataview.create("dtFlex","dtVFlex")
+
+
+'anchor the grid
+gui.Form_Grid.GsGridControl1.Anchor(15)
+gui.Form_Grid.cmdClose.Anchor(6)
+gui.Form_Grid.cmdExport.Anchor(10)
+
+
+
+'bind to gridview)
+gui.Form_Grid.GsGridControl1.DataSource("dtFlex","dtVFlex")
+gui.Form_Grid.GsGridControl1.AddGridViewFromDatatable("dGvFlex","dtFlex")
+gui.Form_Grid.GsGridControl1.SetGridviewProperty("dGvFlex","AllowSort","True")
+gui.Form_Grid.GsGridControl1.SetGridviewProperty("dGvFlex","AllowFilter","True")
+F.ODBC.Connection!conx.Close
+
+'blink the screen so the gridcontrol gets populated.
+gui.Form_Grid..Show
+
+
+
+F.Intrinsic.Control.ExitSub
+
+F.Intrinsic.Control.Label("cmdOK_Click_Err")
+F.Intrinsic.Control.If(V.Ambient.ErrorNumber,<>,0)
+	Function.Intrinsic.String.Concat("Project: GAB_4465_GUIFlex_Dash.g2u",V.Ambient.Newline,V.Ambient.Newline,"Subroutine: ",V.Ambient.CurrentSubroutine,V.Ambient.NewLine,"Error Occurred ",V.Ambient.ErrorNumber," with description ",V.Ambient.ErrorDescription,V.Local.sError)
+	F.Intrinsic.UI.Msgbox(V.Local.sError)
+Function.Intrinsic.Control.EndIf
+
+
+Program.Sub.cmdOK_Click.End
+
+Program.Sub.cmdCancel_Click.Start
+f.Intrinsic.Control.CallSub(form_date_unload)
+
+Program.Sub.cmdCancel_Click.End
+
+Program.Sub.cmdClose_Click.Start
+f.Intrinsic.Control.End
+
+Program.Sub.cmdClose_Click.End
+
+Program.Sub.cmdExport_Click.Start
+F.Intrinsic.Control.SetErrorHandler("cmdExport_Click_Err")
+F.Intrinsic.Control.ClearErrors
+
+V.Local.sError.Declare(String)
+v.Local.bExcel.Declare(Boolean)
+v.Local.sFile.Declare(String)
+v.Local.bFileLocked.Declare(Boolean)
+v.Local.sMsg.Declare(String)
+
+
+
+'export based on available program
+f.Intrinsic.Control.If(v.Local.bExcel)
+	f.Intrinsic.String.Build("{0}\flex_schedule.xlsx",V.Caller.LocalGssTempDir,v.Local.sFile)
+	f.Intrinsic.File.IsFileLocked(v.Local.sFile,v.Local.bFileLocked)
+	f.Intrinsic.Control.If(v.Local.bFileLocked)
+		f.Intrinsic.String.Build("The file is already open, please close and try again. {0} FILE : {1}",v.Ambient.NewLine,v.Local.sFile,v.Local.sMsg)
+		f.Intrinsic.UI.Msgbox(v.Local.sMsg,"File in use")
+	f.Intrinsic.Control.else
+		Gui.Form_Grid.GsGridControl1.Export(v.Local.sFile,"xlsx")
+		F.Intrinsic.Task.ShellExec(0,"",V.Local.sFile,"","",1)
+	f.Intrinsic.Control.EndIf
+f.Intrinsic.Control.Else
+	f.Intrinsic.String.Build("{0}\flex_schedule.csv",V.Caller.LocalGssTempDir,v.Local.sFile)
+	f.Intrinsic.File.IsFileLocked(v.Local.sFile,v.Local.bFileLocked)
+	f.Intrinsic.Control.If(v.Local.bFileLocked)
+		f.Intrinsic.String.Build("The file is already open, please close and try again. {0} FILE : {1}",v.Ambient.NewLine,v.Local.sFile,v.Local.sMsg)
+		f.Intrinsic.UI.Msgbox(v.Local.sMsg,"File in use")
+	f.Intrinsic.Control.else
+		Gui.Form_Grid.GsGridControl1.Export(v.Local.sFile,"csv")
+		F.Intrinsic.Task.ShellExec(0,"",V.Local.sFile,"","",1)
+	f.Intrinsic.Control.EndIf
+f.Intrinsic.Control.EndIf
+
+
+F.Intrinsic.Control.ExitSub
+
+F.Intrinsic.Control.Label("cmdExport_Click_Err")
+F.Intrinsic.Control.If(V.Ambient.ErrorNumber,<>,0)
+	Function.Intrinsic.String.Concat("Project: GAB_4465_GUIFlex_Dash.g2u",V.Ambient.Newline,V.Ambient.Newline,"Subroutine: ",V.Ambient.CurrentSubroutine,V.Ambient.NewLine,"Error Occurred ",V.Ambient.ErrorNumber," with description ",V.Ambient.ErrorDescription,V.Local.sError)
+	F.Intrinsic.UI.Msgbox(V.Local.sError)
+Function.Intrinsic.Control.EndIf
+
+
+Program.Sub.cmdExport_Click.End
+
+Program.Sub.get_loc.Start
+'getting the location of the SFDC based on the GUI Group Secrity settings
+V.Local.sSql.Declare(String)
+v.Local.iRet.Declare(Long)
+v.Local.sRet.Declare(String)
+
+f.Intrinsic.String.Build("select GUI_GROUP from GUI_GROUP_MEMBERSHIP where TERMINAL = '{0}'",v.Caller.Terminal,V.Local.sSql)
+F.ODBC.Connection!cony.OpenConnection(v.Ambient.Ccon,v.Ambient.Cuser,v.Ambient.Cpass)
+f.ODBC.Connection!cony.ExecuteAndReturn(v.Local.sSql,v.Local.iRet)
+f.Intrinsic.String.Build("select DESCRIPTION from GUI_GROUP_MASTER where GROUP_ID = {0}",V.Local.iRet,V.Local.sSql)
+F.ODBC.Connection!cony.ExecuteAndReturn(V.Local.sSql,V.Local.sRet)
+F.Intrinsic.String.Left(V.Local.sRet,2,V.Global.sTermLocation)
+F.ODBC.Connection!cony.Close
+F.Intrinsic.Control.ExitSub
+
+Program.Sub.get_loc.End
+
+Program.Sub.Comments.Start
+${$0$}$$}$SKT$}$3/24/2016 7:58:54 PM$}$False
+Program.Sub.Comments.End
